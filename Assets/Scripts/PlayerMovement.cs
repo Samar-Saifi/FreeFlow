@@ -19,6 +19,7 @@ public class PlayerMovement : MonoBehaviour
 
     private float currentAcceleration = 1f;
     private Coroutine accelerationRoutine;
+    private float verticalVelocity = -2f;
 
     private void Start()
     {
@@ -35,39 +36,51 @@ public class PlayerMovement : MonoBehaviour
         HandleMovement();
     }
 
-    private void FixedUpdate()
-    {
-        if (!controller.isGrounded)
-        {
-            controller.Move(Vector3.down * gravity * Time.fixedDeltaTime);
-        }
-    }
-
     private void HandleMovement()
     {
+        if (cam == null) cam = Camera.main;
+
         Vector3 input = new Vector3(Input.GetAxis("Horizontal"), 0f, Input.GetAxis("Vertical"));
 
         if (input.sqrMagnitude < 0.01f)
         {
             animator.SetFloat("Speed", 0f);
             moveDir = Vector3.zero;
-            return;
+        }
+        else
+        {
+            Vector3 camForward = cam != null ? cam.transform.forward : Vector3.forward;
+            Vector3 camRight = cam != null ? cam.transform.right : Vector3.right;
+            camForward.y = 0f;
+            camRight.y = 0f;
+            camForward.Normalize();
+            camRight.Normalize();
+
+            moveDir = camForward * input.z + camRight * input.x;
+
+            if (moveDir.sqrMagnitude > 0.001f)
+            {
+                float factor = 1f - Mathf.Pow(1f - Mathf.Clamp01(rotationSpeed), Time.deltaTime * 60f);
+                transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(moveDir), factor);
+            }
+
+            animator.SetFloat("Speed", input.magnitude * currentAcceleration);
         }
 
-        Vector3 camForward = cam.transform.forward;
-        Vector3 camRight = cam.transform.right;
-        camForward.y = camRight.y = 0f;
+        if (controller.isGrounded)
+        {
+            if (verticalVelocity < 0f)
+                verticalVelocity = -2f;
+        }
+        else
+        {
+            verticalVelocity -= gravity * Time.deltaTime;
+        }
 
-        moveDir = camForward.normalized * input.z + camRight.normalized * input.x;
-
-        transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(moveDir * currentAcceleration), rotationSpeed);
-
-        animator.SetFloat("Speed", input.magnitude * currentAcceleration);
-
-        controller.Move(moveDir * currentAcceleration * Time.deltaTime);
+        Vector3 motion = (moveDir * currentAcceleration) + (Vector3.up * verticalVelocity);
+        controller.Move(motion * Time.deltaTime);
     }
 
-    #region Enable / Disable Movement
     public void DisableMovement()
     {
         animator.SetFloat("Speed", 0f);
@@ -94,5 +107,4 @@ public class PlayerMovement : MonoBehaviour
 
         currentAcceleration = to;
     }
-    #endregion
 }

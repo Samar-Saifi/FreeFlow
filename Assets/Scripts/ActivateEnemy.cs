@@ -8,16 +8,26 @@ public class ActivateEnemy : MonoBehaviour
     {
         if (!other.CompareTag("Player")) return;
         
-        audioSource.volume = 0.05f;
-        audioSource.Play();
-        foreach (var enemy in EnemyManager.instance.allEnemies)
+        if (audioSource != null)
         {
-            enemy.enabled = true;                   
-            enemy.playerTarget = other.transform;
+            audioSource.volume = 0.05f;
+            audioSource.Play();
         }
 
-        EnemyManager.instance.enemiesActive = true;
+        if (EnemyManager.instance != null)
+        {
+            foreach (var enemy in EnemyManager.instance.allEnemies)
+            {
+                if (enemy != null)
+                {
+                    enemy.enabled = true;                   
+                    enemy.playerTarget = other.transform;
+                }
+            }
+
+            EnemyManager.instance.enemiesActive = true;
+        }
+
         gameObject.SetActive(false);
     }
-
 }

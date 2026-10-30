@@ -18,7 +18,6 @@ public class CombatScript : MonoBehaviour
 
     [Header("Particles")] public TrailRenderer leftTrail;
     public TrailRenderer rightTrail;
-    
 
     [HideInInspector] public EnemyScript lockedTarget;
 
@@ -45,18 +44,24 @@ public class CombatScript : MonoBehaviour
         playerMovement = GetComponent<PlayerMovement>();
         characterController = GetComponent<CharacterController>();
         health = GetComponent<Health>();
-        impulseSource  =  GetComponent<CinemachineImpulseSource>();
+        impulseSource = GetComponent<CinemachineImpulseSource>();
         audioSource = GetComponent<AudioSource>();
 
-        health.onDamageApplied.AddListener(OnGettingHit);
-        health.onDeath.AddListener(OnDeath);
+        if (health != null)
+        {
+            health.onDamageApplied.AddListener(OnGettingHit);
+            health.onDeath.AddListener(OnDeath);
+        }
         
         DisableTrail();
     }
 
     private void Update()
     {
-        animator.applyRootMotion = !(attacking || countering);
+        if (animator != null)
+        {
+            animator.applyRootMotion = !(attacking || countering);
+        }
 
         if (Input.GetKeyDown(attackKey))
             TryAttack();
@@ -65,30 +70,39 @@ public class CombatScript : MonoBehaviour
             TryCounter();
     }
 
-    #region Events
     private void OnGettingHit()
     {
-        StopAllCoroutines();
+        StopCoroutineIfRunning(ref attackCoroutine);
+        StopCoroutineIfRunning(ref moveCoroutine);
         attacking = countering = false;
-        playerMovement.enabled = true;
-        playerMovement.EnableMovement();
-        animator.SetTrigger("Hit");
+
+        if (playerMovement != null)
+        {
+            playerMovement.enabled = true;
+            playerMovement.EnableMovement();
+        }
+
+        if (animator != null)
+        {
+            animator.SetTrigger("Hit");
+        }
     }
 
     private void OnDeath()
     {
-        Destroy(playerMovement);
-        Destroy(EnemyManager.instance);
-        Destroy(characterController);
+        StopCoroutineIfRunning(ref attackCoroutine);
+        StopCoroutineIfRunning(ref moveCoroutine);
+        attacking = countering = false;
+
+        if (playerMovement != null) playerMovement.enabled = false;
+        if (characterController != null) characterController.enabled = false;
 
         Cursor.visible = true;
         Cursor.lockState = CursorLockMode.None;
 
-        Destroy(this);
+        this.enabled = false;
     }
-    #endregion
 
-    #region Attack
     private void TryAttack()
     {
         if (attacking || countering || blocking)
@@ -99,29 +113,68 @@ public class CombatScript : MonoBehaviour
 
         if (target == null)
         {
-            PlayAttack(null, "cross", 0);
+            PlayAirAttack("cross", 0.4f);
             return;
         }
-        
+
+        if (attacksList == null || attacksList.Length == 0) return;
         PlayAttack(target, attacksList[lastAttackIndex].attackName, attacksList[lastAttackIndex].duration);
     }
 
     private EnemyScript FindTarget()
     {
-        if (playerMovement.moveDir.magnitude < 0.2f)
+        if (EnemyManager.instance == null) return null;
+
+        if (playerMovement != null && playerMovement.moveDir.magnitude < 0.2f)
         {
             Collider[] hits = Physics.OverlapSphere(transform.position, 4f, EnemyManager.instance.layerMask);
             foreach (Collider hit in hits)
             {
                 EnemyScript enemy = hit.GetComponent<EnemyScript>();
-                if (enemy != null) return enemy;
+                if (enemy != null && enemy.enabled) return enemy;
             }
         }
 
         EnemyScript current = EnemyManager.instance.GetCurrentTarget();
-        if (current != null) return current;
+        if (current != null && current.enabled) return current;
 
         return EnemyManager.instance.GetRandomEnemy();
+    }
+
+    private void PlayAirAttack(string attackName, float duration)
+    {
+        StopCoroutineIfRunning(ref attackCoroutine);
+        StopCoroutineIfRunning(ref moveCoroutine);
+
+        if (animator != null) animator.SetTrigger(attackName);
+        attackCoroutine = StartCoroutine(AirAttackRoutine(duration));
+    }
+
+    private IEnumerator AirAttackRoutine(float duration)
+    {
+        if (playerMovement != null)
+        {
+            playerMovement.DisableMovement();
+            playerMovement.enabled = false;
+        }
+
+        attacking = true;
+
+        if (audioSource != null && swooshSound != null)
+        {
+            audioSource.pitch = 1f;
+            audioSource.PlayOneShot(swooshSound, 1f);
+        }
+
+        yield return new WaitForSeconds(duration);
+
+        attacking = false;
+
+        if (playerMovement != null)
+        {
+            playerMovement.enabled = true;
+            playerMovement.EnableMovement();
+        }
     }
 
     private void PlayAttack(EnemyScript target, string attackName, float duration, bool retract = false)
@@ -137,37 +190,45 @@ public class CombatScript : MonoBehaviour
             target._enemyState = EnemyState.Idle;
         }
         
-        animator.SetTrigger(attackName);
+        if (animator != null) animator.SetTrigger(attackName);
         attackCoroutine = StartCoroutine(AttackRoutine(target, duration, retract));
         MoveTowardsTarget(target, duration);
     }
 
     private IEnumerator AttackRoutine(EnemyScript target, float duration, bool retract)
     {
-        playerMovement.DisableMovement();
-        playerMovement.enabled = false;
+        if (playerMovement != null)
+        {
+            playerMovement.DisableMovement();
+            playerMovement.enabled = false;
+        }
+
         attacking = true;
+        float safeDuration = Mathf.Max(0.25f, duration);
         float originalLength = 0.193f;
 
-        audioSource.volume = 1;
-        audioSource.clip = swooshSound;
-        audioSource.pitch = originalLength / (duration);
+        if (audioSource != null && swooshSound != null)
+        {
+            audioSource.pitch = Mathf.Clamp(originalLength / safeDuration, 0.5f, 2f);
+            audioSource.PlayOneShot(swooshSound, 1f);
+        }
         
-        yield return new WaitForSeconds(0.2f);
+        yield return new WaitForSeconds(0.15f);
         
-        audioSource.Play();
-        
-        yield return new WaitForSeconds(duration - 0.2f);
+        yield return new WaitForSeconds(Mathf.Max(0.05f, safeDuration - 0.15f));
 
         if (target != null)
         {
+            if (audioSource != null && punchSound != null)
+            {
+                audioSource.pitch = 1f;
+                audioSource.PlayOneShot(punchSound, 1f);
+            }
             
-            audioSource.volume = 1;
-            audioSource.clip = punchSound;
-            audioSource.pitch = 1;
-            audioSource.Play();
-            
-            target.enemyHealth.RegisterHit();
+            if (target.enemyHealth != null)
+            {
+                target.enemyHealth.RegisterHit();
+            }
 
             if (target._enemyState == EnemyState.Attacking || target._enemyState == EnemyState.Running)
                 target.StopAttacking();
@@ -178,28 +239,32 @@ public class CombatScript : MonoBehaviour
             }
         }
         
-        impulseSource.m_ImpulseDefinition.m_AmplitudeGain = 0.4f;
-        impulseSource.GenerateImpulse();
-        yield return new WaitForSeconds(0.4f);
-        impulseSource.m_ImpulseDefinition.m_AmplitudeGain = 0;
+        if (impulseSource != null)
+        {
+            impulseSource.m_ImpulseDefinition.m_AmplitudeGain = 0.4f;
+            impulseSource.GenerateImpulse();
+            yield return new WaitForSeconds(0.4f);
+            impulseSource.m_ImpulseDefinition.m_AmplitudeGain = 0;
+        }
         
         attacking = countering = false;
 
-        playerMovement.enabled = true;
-        playerMovement.EnableMovement();
+        if (playerMovement != null)
+        {
+            playerMovement.enabled = true;
+            playerMovement.EnableMovement();
+        }
 
         if (retract && target != null)
             target.Retract();
     }
-    #endregion
 
-    #region Counter
     private void TryCounter()
     {
-        if (attacking || blocking)
+        if (attacking || blocking || EnemyManager.instance == null)
             return;
 
-        EnemyScript attacker = (EnemyManager.instance.attackingEnemies.Count > 0)? EnemyManager.instance.attackingEnemies[0]:null;
+        EnemyScript attacker = (EnemyManager.instance.attackingEnemies.Count > 0) ? EnemyManager.instance.attackingEnemies[0] : null;
 
         if (attacker == null)
         {
@@ -207,21 +272,25 @@ public class CombatScript : MonoBehaviour
             return;
         }
 
-        attacker.attackingParticle.Stop();
-        countering = true;
-        EnemyManager.instance.RemoveAttacker( attacker);
+        if (attacker.attackingParticle != null)
+        {
+            attacker.attackingParticle.Stop();
+        }
 
+        countering = true;
+        EnemyManager.instance.RemoveAttacker(attacker);
         attacker.StopAttacking();
 
-        PlayAttack(attacker, attacksList[lastAttackIndex].attackName, attacksList[lastAttackIndex].duration, true);
-
-        lastAttackIndex = (int)Mathf.Repeat(lastAttackIndex + 1, attacksList.Length);
+        if (attacksList != null && attacksList.Length > 0)
+        {
+            PlayAttack(attacker, attacksList[lastAttackIndex].attackName, attacksList[lastAttackIndex].duration, true);
+        }
     }
 
     private void StartBlock()
     {
         blocking = true;
-        animator.SetTrigger("Block");
+        if (animator != null) animator.SetTrigger("Block");
         StartCoroutine(BlockDuration(0.13f));
     }
 
@@ -230,20 +299,22 @@ public class CombatScript : MonoBehaviour
         yield return new WaitForSeconds(duration);
         blocking = false;
     }
-    #endregion
 
-    #region Movement
     private void MoveTowardsTarget(EnemyScript target, float duration)
     {
-        if (target == null) return;
+        if (target == null || attacksList == null || attacksList.Length == 0) return;
 
         StopCoroutineIfRunning(ref moveCoroutine);
 
         Vector3 direction = target.transform.position - transform.position;
-        Vector3 rotation = Quaternion.LookRotation(direction).eulerAngles;
-        rotation.x = rotation.z = 0;
+        if (direction.sqrMagnitude > 0.001f)
+        {
+            Vector3 rotation = Quaternion.LookRotation(direction).eulerAngles;
+            rotation.x = rotation.z = 0;
 
-        moveCoroutine = StartCoroutine(MoveRoutine(TargetOffset(target.transform), rotation, duration));
+            moveCoroutine = StartCoroutine(MoveRoutine(TargetOffset(target.transform), rotation, duration));
+        }
+
         lastAttackIndex = (int)Mathf.Repeat(lastAttackIndex + 1, attacksList.Length);
     }
 
@@ -259,7 +330,10 @@ public class CombatScript : MonoBehaviour
             float t = Mathf.Clamp01(elapsed / duration);
             transform.rotation = Quaternion.Euler(Vector3.Lerp(startRot, targetRot, t));
 
-            characterController.Move(Vector3.Lerp(startPos, target, t) - transform.position);
+            if (characterController != null)
+            {
+                characterController.Move(Vector3.Lerp(startPos, target, t) - transform.position);
+            }
 
             elapsed += Time.deltaTime;
             yield return null;
@@ -269,17 +343,21 @@ public class CombatScript : MonoBehaviour
 
     public Vector3 TargetOffset(Transform target)
     {
-        return Vector3.MoveTowards(target.position, transform.position, attacksList[lastAttackIndex].distance);
+        if (target == null) return transform.position;
+        float distance = (attacksList != null && attacksList.Length > 0) ? attacksList[lastAttackIndex].distance : 1.5f;
+        return Vector3.MoveTowards(target.position, transform.position, distance);
     }
-    #endregion
-
-    #region Helpers
     
     public void playFootSteps()
     {
-        audioSource.volume = 0.3f;
-        audioSource.clip = footStepSounds[Random.Range(0, footStepSounds.Length)];
-        audioSource.Play();
+        if (audioSource != null && footStepSounds != null && footStepSounds.Length > 0)
+        {
+            AudioClip clip = footStepSounds[Random.Range(0, footStepSounds.Length)];
+            if (clip != null)
+            {
+                audioSource.PlayOneShot(clip, 0.3f);
+            }
+        }
     }
     
     private void StopCoroutineIfRunning(ref Coroutine routine)
@@ -293,31 +371,37 @@ public class CombatScript : MonoBehaviour
     
     public void EnableTrail()
     {
-        StartCoroutine(FadeTrail(0f, 0.5f));
+        if (leftTrail != null && rightTrail != null)
+        {
+            StartCoroutine(FadeTrail(0f, 0.5f));
+        }
     }
     
     public void DisableTrail()
     {
-        StartCoroutine(FadeTrail(leftTrail.time, 0f));
+        if (leftTrail != null && rightTrail != null)
+        {
+            StartCoroutine(FadeTrail(leftTrail.time, 0f));
+        }
     }
     
     private IEnumerator FadeTrail(float start, float end)
     {
+        if (leftTrail == null || rightTrail == null) yield break;
+
         float elapsed = 0f;
         while (elapsed < 0.5f)
         {
-            leftTrail.time = Mathf.Lerp(start, end, elapsed / 0.5f);
-            rightTrail.time = Mathf.Lerp(start, end, elapsed / 0.5f);
+            float val = Mathf.Lerp(start, end, elapsed / 0.5f);
+            leftTrail.time = val;
+            rightTrail.time = val;
             elapsed += Time.deltaTime;
             yield return null;
         }
         leftTrail.time = end;
         rightTrail.time = end;
     }
-    
-    #endregion
 }
-
 
 [Serializable]
 public struct AttackType

@@ -21,20 +21,33 @@ public class EnemyScript : MonoBehaviour
     private Animator animator;
     private CharacterController controller;
     private Coroutine attackCoroutine;
+    private float verticalVelocity = -2f;
 
-    private void Start()
+    private void Awake()
     {
         controller = GetComponent<CharacterController>();
         animator = GetComponent<Animator>();
         enemyHealth = GetComponent<Health>();
         audioSource = GetComponent<AudioSource>();
 
-        EnemyManager.instance.AddEnemy(this);
+        if (EnemyManager.instance != null)
+        {
+            EnemyManager.instance.AddEnemy(this);
+        }
+    }
 
-        enemyHealth.onDamageApplied.AddListener(OnDamaged);
-        enemyHealth.onDeath.AddListener(OnDeath);
+    private void Start()
+    {
+        if (enemyHealth != null)
+        {
+            enemyHealth.onDamageApplied.AddListener(OnDamaged);
+            enemyHealth.onDeath.AddListener(OnDeath);
+        }
 
-        this.enabled = false;
+        if (EnemyManager.instance != null && !EnemyManager.instance.enemiesActive)
+        {
+            this.enabled = false;
+        }
     }
 
     private void Update()
@@ -43,50 +56,51 @@ public class EnemyScript : MonoBehaviour
         RotateTowardsPlayer();
     }
 
-    private void FixedUpdate()
-    {
-        if (!controller.isGrounded)
-            controller.Move(Vector3.down * gravity * Time.fixedDeltaTime);
-    }
-
-    #region Player Interaction / Attack
-
     public void AttackPlayer(float stopDistance = 1f)
     {
         if (_enemyState == EnemyState.Attacking || attackCoroutine != null || playerTarget == null)
             return;
 
         _enemyState = EnemyState.Running;
-
-        float distance = Vector3.Distance(transform.position, playerTarget.position);
-
-        if (distance <= stopDistance)
-        {
-            StartCoroutine(PerformAttack(stopDistance));
-            return;
-        }
-
-        animator.SetTrigger("Run");
         attackCoroutine = StartCoroutine(PerformAttack(stopDistance));
     }
 
     private IEnumerator PerformAttack(float stopDistance)
     {
+        if (animator != null) animator.SetTrigger("Run");
+
         while (playerTarget != null && Vector3.Distance(transform.position, playerTarget.position) > stopDistance)
         {
+            Vector3 toPlayer = playerTarget.position - transform.position;
+            toPlayer.y = 0f;
+
+            if (toPlayer.sqrMagnitude > 0.01f)
+            {
+                transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(toPlayer), 10f * Time.deltaTime);
+                controller.Move(toPlayer.normalized * speed * Time.deltaTime);
+            }
             yield return null;
         }
 
-        EnemyManager.instance.AddAttacker(this);
+        if (playerTarget == null)
+        {
+            _enemyState = EnemyState.Idle;
+            if (animator != null) animator.SetTrigger("Idle");
+            attackCoroutine = null;
+            yield break;
+        }
+
+        if (EnemyManager.instance != null) EnemyManager.instance.AddAttacker(this);
         _enemyState = EnemyState.Attacking;
+
         if (attackingParticle != null) attackingParticle.Play();
-        animator.SetTrigger("Attack");
+        if (animator != null) animator.SetTrigger("Attack");
 
         yield return new WaitForSeconds(1f);
         TryHittingPlayer();
 
         yield return new WaitForSeconds(0.5f);
-        EnemyManager.instance.RemoveAttacker(this);
+        if (EnemyManager.instance != null) EnemyManager.instance.RemoveAttacker(this);
         Retract();
 
         _enemyState = EnemyState.Idle;
@@ -101,14 +115,16 @@ public class EnemyScript : MonoBehaviour
             attackCoroutine = null;
         }
 
-        EnemyManager.instance.RemoveAttacker(this);
-        attackingParticle.Stop();
+        if (EnemyManager.instance != null) EnemyManager.instance.RemoveAttacker(this);
+        if (attackingParticle != null) attackingParticle.Stop();
         _enemyState = EnemyState.Idle;
-        animator.SetTrigger("Idle");
+        if (animator != null) animator.SetTrigger("Idle");
     }
 
     private void TryHittingPlayer()
     {
+        if (playerTarget == null) return;
+
         Vector3 attackPos = Vector3.MoveTowards(transform.position, playerTarget.position, 1f);
         Collider[] hits = Physics.OverlapSphere(attackPos, 0.7f, LayerMask.GetMask("Player"));
 
@@ -118,30 +134,48 @@ public class EnemyScript : MonoBehaviour
             if (playerHealth != null)
             {
                 playerHealth.RegisterHit();
-                audioSource.volume = 1;
-                audioSource.clip = punchSound;
-                audioSource.Play();
+                if (audioSource != null && punchSound != null)
+                {
+                    audioSource.PlayOneShot(punchSound, 1f);
+                }
             }
         }
     }
 
-
     public void playFootSteps()
     {
-        audioSource.volume = 0.3f;
-        audioSource.clip = footStepSounds[Random.Range(0, footStepSounds.Length)];
-        audioSource.Play();
+        if (audioSource != null && footStepSounds != null && footStepSounds.Length > 0)
+        {
+            AudioClip clip = footStepSounds[Random.Range(0, footStepSounds.Length)];
+            if (clip != null)
+            {
+                audioSource.PlayOneShot(clip, 0.3f);
+            }
+        }
     }
 
-#endregion
-
-    #region Movement & Rotation
     private void HandleMovement()
     {
+        if (controller == null) return;
+
+        if (controller.isGrounded)
+        {
+            if (verticalVelocity < 0f) verticalVelocity = -2f;
+        }
+        else
+        {
+            verticalVelocity -= gravity * Time.deltaTime;
+        }
+
+        controller.Move(Vector3.up * verticalVelocity * Time.deltaTime);
+
         if (targetPosition == Vector3.zero) 
         {
-            animator.SetFloat("X", 0f, dampTime, Time.deltaTime);
-            animator.SetFloat("Y", 0f, dampTime, Time.deltaTime);
+            if (animator != null)
+            {
+                animator.SetFloat("X", 0f, dampTime, Time.deltaTime);
+                animator.SetFloat("Y", 0f, dampTime, Time.deltaTime);
+            }
             return;
         }
 
@@ -154,64 +188,81 @@ public class EnemyScript : MonoBehaviour
             controller.Move(moveDir.normalized * speed * Time.deltaTime);
 
             Vector3 localDir = transform.InverseTransformDirection(moveDir.normalized);
-            animator.SetFloat("X", localDir.x, dampTime, Time.deltaTime);
-            animator.SetFloat("Y", localDir.z, dampTime, Time.deltaTime);
+            if (animator != null)
+            {
+                animator.SetFloat("X", localDir.x, dampTime, Time.deltaTime);
+                animator.SetFloat("Y", localDir.z, dampTime, Time.deltaTime);
+            }
         }
         else
         {
             targetPosition = Vector3.zero;
             _enemyState = EnemyState.Idle;
-            animator.SetFloat("X", 0f, dampTime, Time.deltaTime);
-            animator.SetFloat("Y", 0f, dampTime, Time.deltaTime);
+            if (animator != null)
+            {
+                animator.SetFloat("X", 0f, dampTime, Time.deltaTime);
+                animator.SetFloat("Y", 0f, dampTime, Time.deltaTime);
+            }
         }
     }
 
     private void RotateTowardsPlayer()
     {
-        if (playerTarget == null ) return;
+        if (playerTarget == null) return;
 
         Vector3 dir = playerTarget.position - transform.position;
         dir.y = 0;
         if (dir.sqrMagnitude > 0.01f)
         {
-            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir), 0.05f);
+            transform.rotation = Quaternion.Slerp(transform.rotation, Quaternion.LookRotation(dir), 5f * Time.deltaTime);
         }
     }
-    #endregion
 
-    #region Retract
     public void Retract()
     {
-        attackingParticle.Stop();
+        if (attackingParticle != null) attackingParticle.Stop();
         _enemyState = EnemyState.Retracting;
-        targetPosition = EnemyManager.instance.GetRandomPositionNearTarget(
-            playerTarget.position, 5f, EnemyManager.instance.layerMask);
-    }
-    #endregion
 
-    #region Events
+        if (EnemyManager.instance != null && playerTarget != null)
+        {
+            targetPosition = EnemyManager.instance.GetRandomPositionNearTarget(
+                playerTarget.position, 5f, EnemyManager.instance.layerMask);
+        }
+    }
+
     private void OnDamaged()
     {
         StopAllCoroutines();
+        attackCoroutine = null;
         StopAttacking();
-        animator.SetTrigger("Hit");
+        if (animator != null) animator.SetTrigger("Hit");
         _enemyState = EnemyState.Idle;
     }
 
     private void OnDeath()
     {
-        animator.SetTrigger("Death");
-        EnemyManager.instance.RemoveEnemy(this);
-        
-        if (EnemyManager.instance.AliveEnemies() <= 0)
+        if (attackCoroutine != null)
         {
-            UI_Manager.instance.ShowWinScreen();
+            StopCoroutine(attackCoroutine);
+            attackCoroutine = null;
+        }
+
+        if (attackingParticle != null) attackingParticle.Stop();
+
+        if (EnemyManager.instance != null)
+        {
+            EnemyManager.instance.RemoveAttacker(this);
+            EnemyManager.instance.RemoveEnemy(this);
+            
+            if (EnemyManager.instance.AliveEnemies() <= 0 && UI_Manager.instance != null)
+            {
+                UI_Manager.instance.ShowWinScreen();
+            }
         }
         
-        Destroy(controller);
-        Destroy(this);
+        if (controller != null) controller.enabled = false;
+        this.enabled = false;
     }
-    #endregion
 
     private void OnDrawGizmos()
     {

@@ -10,8 +10,9 @@ public class EnemyManager : MonoBehaviour
     [SerializeField] private PlayerMovement _playerMovement;
 
     [Header("Enemy Settings")]
+    [SerializeField] private EnemyScript enemyPrefab;
     public LayerMask layerMask;
-    public List<EnemyScript> attackingEnemies;
+    public List<EnemyScript> attackingEnemies = new List<EnemyScript>();
     public List<EnemyScript> allEnemies = new List<EnemyScript>();
     public Vector3[] spawnPositions;
     public float maxCooldownTime = 3f;
@@ -29,7 +30,11 @@ public class EnemyManager : MonoBehaviour
     private void Awake()
     {
         if (instance == null) instance = this;
-        else Destroy(gameObject);
+        else
+        {
+            Destroy(gameObject);
+            return;
+        }
 
         SpawnEnemies(spawnPositions);
     }
@@ -44,7 +49,6 @@ public class EnemyManager : MonoBehaviour
             TryAttack();
     }
 
-    #region Attack Logic
     public void TryAttack()
     {
         onCooldown = true;
@@ -53,28 +57,43 @@ public class EnemyManager : MonoBehaviour
         if (attacker != null)
             attacker.AttackPlayer();
 
-        LeanTween.delayedCall(Random.Range(1.7f, maxCooldownTime), () => onCooldown = false);
+        float delay = Random.Range(1.7f, Mathf.Max(1.7f, maxCooldownTime));
+        LeanTween.delayedCall(gameObject, delay, () => onCooldown = false);
     }
 
     private EnemyScript ChooseAttacker()
     {
+        if (_playerCombat == null) return null;
+
+        List<EnemyScript> candidates = new List<EnemyScript>();
         for (int i = 0; i < allEnemies.Count; i++)
         {
-            EnemyScript attacker = GetRandomEnemy(20);
-            if (attacker == null) continue;
+            EnemyScript enemy = allEnemies[i];
+            if (enemy != null && enemy.enabled && enemy._enemyState == EnemyState.Idle && enemy != _playerCombat.lockedTarget && !attackingEnemies.Contains(enemy))
+            {
+                candidates.Add(enemy);
+            }
+        }
 
-            if (attacker._enemyState == EnemyState.Idle && attacker != _playerCombat.lockedTarget)
-                return attacker;
+        if (candidates.Count > 0)
+        {
+            return candidates[Random.Range(0, candidates.Count)];
         }
 
         return null;
     }
-    #endregion
 
-    #region Player Target Detection
     private void DetectTarget()
     {
+        if (_playerMovement == null) return;
+
         _inputDirection = _playerMovement.moveDir.normalized;
+
+        if (_inputDirection.sqrMagnitude < 0.01f)
+        {
+            currentTarget = null;
+            return;
+        }
 
         RaycastHit ray;
         if (Physics.SphereCast(_playerMovement.transform.position, 3f, _inputDirection, out ray, detectionRange, layerMask))
@@ -91,22 +110,33 @@ public class EnemyManager : MonoBehaviour
             Debug.DrawRay(_playerMovement.transform.position, _inputDirection * detectionRange, Color.red);
         }
     }
-    #endregion
 
-    #region Utility
     public EnemyScript GetCurrentTarget() => currentTarget;
 
     public EnemyScript GetRandomEnemy(float maxDistance = 10f)
     {
-        for (int i = 0; i < 10; i++)
+        if (allEnemies.Count == 0 || _playerMovement == null) return null;
+
+        List<EnemyScript> candidates = new List<EnemyScript>();
+        Vector3 playerPos = _playerMovement.transform.position;
+
+        for (int i = 0; i < allEnemies.Count; i++)
         {
-            EnemyScript randomEnemy = allEnemies[Random.Range(0, allEnemies.Count)];
-            if (randomEnemy._enemyState == EnemyState.Idle)
+            EnemyScript enemy = allEnemies[i];
+            if (enemy != null && enemy.enabled && enemy._enemyState == EnemyState.Idle)
             {
-                if (Vector3.Distance(randomEnemy.transform.position, _playerMovement.transform.position) <= maxDistance)
-                    return randomEnemy;
+                if (Vector3.Distance(enemy.transform.position, playerPos) <= maxDistance)
+                {
+                    candidates.Add(enemy);
+                }
             }
         }
+
+        if (candidates.Count > 0)
+        {
+            return candidates[Random.Range(0, candidates.Count)];
+        }
+
         return null;
     }
 
@@ -124,37 +154,66 @@ public class EnemyManager : MonoBehaviour
         return target;
     }
 
-    public void AddEnemy(EnemyScript enemy) => allEnemies.Add(enemy);
+    public void AddEnemy(EnemyScript enemy)
+    {
+        if (enemy != null && !allEnemies.Contains(enemy))
+        {
+            allEnemies.Add(enemy);
+        }
+    }
 
-    public void RemoveEnemy(EnemyScript enemy) => allEnemies.Remove(enemy);
+    public void RemoveEnemy(EnemyScript enemy)
+    {
+        if (enemy == null) return;
+        allEnemies.Remove(enemy);
+        RemoveAttacker(enemy);
+    }
     
     public void RemoveAttacker(EnemyScript attacker)
     {
-        attacker.attackingParticle.Stop();
+        if (attacker == null) return;
+        if (attacker.attackingParticle != null)
+        {
+            attacker.attackingParticle.Stop();
+        }
         attackingEnemies.Remove(attacker);
     }
 
     public void AddAttacker(EnemyScript attacker)
     {
-        if(!attackingEnemies.Contains(attacker)) attackingEnemies.Add(attacker);
+        if (attacker != null && !attackingEnemies.Contains(attacker))
+        {
+            attackingEnemies.Add(attacker);
+        }
     }
 
     public int AliveEnemies() => allEnemies.Count;
 
     public EnemyScript[] GetAllEnemies() => allEnemies.ToArray();
-    #endregion
 
-    #region Spawning
-    private void SpawnEnemies(Vector3[] spawnPositions)
+    private void SpawnEnemies(Vector3[] positions)
     {
-        foreach (Vector3 pos in spawnPositions)
+        if (positions == null || positions.Length == 0) return;
+
+        EnemyScript prefab = enemyPrefab;
+        if (prefab == null && allEnemies.Count > 0)
         {
-            EnemyScript enemy = Instantiate(_playerCombat.lockedTarget.GetComponent<EnemyScript>(), pos, Quaternion.identity);
-            enemy.playerTarget = _playerMovement.transform;
-            enemy.enabled = false; // Wait for activation
+            prefab = allEnemies[0];
+        }
+
+        if (prefab == null) return;
+
+        foreach (Vector3 pos in positions)
+        {
+            EnemyScript enemy = Instantiate(prefab, pos, Quaternion.identity);
+            if (_playerMovement != null)
+            {
+                enemy.playerTarget = _playerMovement.transform;
+            }
+            enemy.enabled = enemiesActive;
+            AddEnemy(enemy);
         }
     }
-    #endregion
 
     private void OnDrawGizmos()
     {
@@ -164,5 +223,13 @@ public class EnemyManager : MonoBehaviour
 
         if (currentTarget != null)
             Gizmos.DrawSphere(currentTarget.transform.position, 0.5f);
+    }
+
+    private void OnDestroy()
+    {
+        if (instance == this)
+        {
+            instance = null;
+        }
     }
 }

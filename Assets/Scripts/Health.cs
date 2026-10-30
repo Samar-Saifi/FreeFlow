@@ -21,15 +21,15 @@ public class Health : MonoBehaviour
         currentHealth = maxHealth;
     }
     
-    public void RegisterHit()
+    public void RegisterHit(int damage = 1)
     {
         if (isDead) return;
-        ApplyDamage();
+        ApplyDamage(damage);
     }
 
-    private void ApplyDamage()
+    private void ApplyDamage(int damage = 1)
     {
-        currentHealth = Mathf.Max(0, currentHealth - 1);
+        currentHealth = Mathf.Max(0, currentHealth - damage);
 
         if (currentHealth > 0)
         {
@@ -53,9 +53,10 @@ public class Health : MonoBehaviour
             animator.SetTrigger("Death");
         }
 
-        Destroy(this, deathAnimationLength);
+        Destroy(gameObject, deathAnimationLength);
     }
 
     public float CurrentHealth => currentHealth;
     public float MaxHealth => maxHealth;
+    public bool IsDead => isDead;
 }

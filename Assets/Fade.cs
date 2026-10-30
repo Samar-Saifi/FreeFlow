@@ -8,37 +8,60 @@ public class Fade : MonoBehaviour
 {
     private Image image;
     
-    public void FadeIn(float duration=2f)
+    public void FadeIn(float duration = 2f)
     {
+        if (image == null) image = GetComponent<Image>();
+        if (image == null) return;
+
         Color color = image.color;
         color.a = 1;
+        image.color = color;
         
-        LeanTween.value(1,0, duration).setOnUpdate((float val)=>
+        LeanTween.value(gameObject, 1, 0, duration).setOnUpdate((float val) =>
         {
-            color.a = val;
-            image.color = color;
+            if (image != null)
+            {
+                color.a = val;
+                image.color = color;
+            }
         });
     }
     
-    public void FadeOut(float duration=2f)
+    public void FadeOut()
     {
+        FadeOut("MainScene", 2f);
+    }
+
+    public void FadeOut(float duration)
+    {
+        FadeOut("MainScene", duration);
+    }
+
+    public void FadeOut(string sceneName, float duration = 2f)
+    {
+        if (image == null) image = GetComponent<Image>();
+        if (image == null) return;
+
         Color color = image.color;
         color.a = 0;
+        image.color = color;
         
-        LeanTween.value(0,1, duration).setOnUpdate((float val)=>
+        LeanTween.value(gameObject, 0, 1, duration).setOnUpdate((float val) =>
         {
-            color.a = val;
-            image.color = color;
+            if (image != null)
+            {
+                color.a = val;
+                image.color = color;
+            }
         });
 
-        LeanTween.delayedCall(duration+0.1f, () =>
+        LeanTween.delayedCall(gameObject, duration + 0.1f, () =>
         {
-            Destroy(gameObject);
-            SceneManager.LoadScene("MainScene");
+            SceneManager.LoadScene(string.IsNullOrEmpty(sceneName) ? "MainScene" : sceneName);
         });
     }
 
-    void Start()
+    private void Start()
     {
         image = GetComponent<Image>();
         FadeIn(2);
